@@ -1,0 +1,12 @@
+_ReSharper*
+Debug
+Release
+bin
+Bin
+obj
+*.user
+*.patch
+*.sln.cache
+*.orig
+*.suo
+*.log
