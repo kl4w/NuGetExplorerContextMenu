@@ -79,6 +79,7 @@
     <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ConfigHandler.cs" />
     <Compile Include="FileContextMenuExt.cs" />
     <Compile Include="ProjectInstaller.cs">
       <SubType>Component</SubType>

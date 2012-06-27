@@ -367,7 +367,8 @@ namespace NuGetContextMenuHandler
     internal enum MF : uint
     {
         MF_BYCOMMAND = 0x00000000,
-        MF_BYPOSITION = 0x00000400
+        MF_BYPOSITION = 0x00000400,
+        MF_POPUP = 0x00000010
     }
 
     #endregion

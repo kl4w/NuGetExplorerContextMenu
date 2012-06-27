@@ -23,8 +23,10 @@ using System.Runtime.InteropServices.ComTypes;
 using NuGetContextMenuHandler.Properties;
 using System.Drawing;
 using System.Xml;
+using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 #endregion
 
 
@@ -43,8 +45,7 @@ namespace NuGetContextMenuHandler
         private string verbCanonicalName = "CSDisplayFileName";
         private string verbHelpText = "Call NuGet Get";
         private uint IDM_DISPLAY = 0;
-        private List<KeyValuePair<string, string>> _sources;
-
+        private ConfigHandler _config = new ConfigHandler();
 
         public FileContextMenuExt()
         {
@@ -66,12 +67,23 @@ namespace NuGetContextMenuHandler
 
         void OnVerbDisplayFileName(IntPtr hWnd, int pos)
         {
-            Process myProcess = new Process();
-            myProcess.EnableRaisingEvents = false;
-            myProcess.StartInfo.FileName = @"cmd.exe";
-            var nugetLoc = Environment.GetEnvironmentVariable("NUGET_EXE");
-            myProcess.StartInfo.Arguments = string.Format("/k {0}\\NuGet.exe get \"{1}\" -s \"{2}\" -x -latest -clean", nugetLoc, this.selectedFile, _sources[pos].Value);
-            myProcess.Start();
+            if (pos < 3)
+            {
+                _config.SwitchOptionValue(pos);
+            }
+            else
+            {
+                var sourcePos = pos - 3;
+                Process myProcess = new Process();
+                myProcess.EnableRaisingEvents = false;
+                myProcess.StartInfo.FileName = @"cmd.exe";
+                var nugetLoc = Environment.GetEnvironmentVariable("NUGET_EXE");
+                var excludeVersion = bool.Parse(_config.ConfigElement("useVersionedPackages").Value) ? string.Empty : " -x";
+                var latest = bool.Parse(_config.ConfigElement("getLatest").Value) ? " -latest" : string.Empty;
+                var clean = bool.Parse(_config.ConfigElement("cleanPackages").Value) ? " -clean" : string.Empty;
+                myProcess.StartInfo.Arguments = string.Format("/k {0}\\NuGet.exe get \"{1}\" -s \"{2}\"{3}{4}{5}", nugetLoc, this.selectedFile, _config.Sources.ElementAt(sourcePos).Value, excludeVersion, latest, clean);
+                myProcess.Start();
+            }
         }
 
 
@@ -220,26 +232,82 @@ namespace NuGetContextMenuHandler
                 return WinError.MAKE_HRESULT(WinError.SEVERITY_SUCCESS, 0, 0);
             }
 
-            IntPtr testMenu = NativeMethods.CreatePopupMenu();
-
-            _sources = GetSources();
-
-            for (uint wId = 0; wId < _sources.Count; wId++)
+            #region sources dropdown
+            IntPtr sourceMenu = NativeMethods.CreatePopupMenu();
+            var sources = _config.Sources;
+            for (uint wId = 0; wId < sources.Count(); wId++)
             {
                 // Use either InsertMenu or InsertMenuItem to add menu items.
                 MENUITEMINFO mii = new MENUITEMINFO();
                 mii.cbSize = (uint)Marshal.SizeOf(mii);
                 mii.fMask = MIIM.MIIM_STRING | MIIM.MIIM_FTYPE |
                     MIIM.MIIM_ID | MIIM.MIIM_STATE;
-                mii.wID = idCmdFirst + wId;
+                mii.wID = idCmdFirst + wId + 3;
                 mii.fType = MFT.MFT_STRING;
-                mii.dwTypeData = _sources[(int)wId].Key;
+                mii.dwTypeData = sources.ElementAt((int)wId).Key;
                 mii.fState = MFS.MFS_ENABLED;
-                if (!NativeMethods.InsertMenuItem(testMenu, wId, true, ref mii))
+                if (!NativeMethods.InsertMenuItem(sourceMenu, wId, true, ref mii))
                 {
                     return Marshal.GetHRForLastWin32Error();
                 }
-                IDM_DISPLAY = wId;
+                IDM_DISPLAY = wId + 3;
+            }
+            #endregion
+
+            #region options dropdown
+            var options = _config.Options;
+            IntPtr optionMenu = NativeMethods.CreatePopupMenu();
+            MENUITEMINFO excludeVersion = new MENUITEMINFO();
+            excludeVersion.cbSize = (uint)Marshal.SizeOf(excludeVersion);
+            excludeVersion.fMask = MIIM.MIIM_STRING | MIIM.MIIM_FTYPE |
+                MIIM.MIIM_ID | MIIM.MIIM_STATE | MIIM.MIIM_CHECKMARKS;
+            excludeVersion.wID = idCmdFirst + 0;
+            excludeVersion.fType = MFT.MFT_STRING;
+            excludeVersion.dwTypeData = "Use versioned packages";
+            var versionChecked = options.First(x => x.Key == "useVersionedPackages").Value == "True" ? MFS.MFS_CHECKED : MFS.MFS_UNCHECKED;
+            excludeVersion.fState = MFS.MFS_ENABLED | versionChecked;
+            if (!NativeMethods.InsertMenuItem(optionMenu, 0, true, ref excludeVersion))
+            {
+                return Marshal.GetHRForLastWin32Error();
+            }
+
+            MENUITEMINFO latest = new MENUITEMINFO();
+            latest.cbSize = (uint)Marshal.SizeOf(latest);
+            latest.fMask = MIIM.MIIM_STRING | MIIM.MIIM_FTYPE |
+                MIIM.MIIM_ID | MIIM.MIIM_STATE | MIIM.MIIM_CHECKMARKS;
+            latest.wID = idCmdFirst + 1;
+            latest.fType = MFT.MFT_STRING;
+            latest.dwTypeData = "Always get latest version";
+            var latestChecked = options.First(x => x.Key == "getLatest").Value == "True" ? MFS.MFS_CHECKED : MFS.MFS_UNCHECKED;
+            latest.fState = MFS.MFS_ENABLED | latestChecked;
+            if (!NativeMethods.InsertMenuItem(optionMenu, 1, true, ref latest))
+            {
+                return Marshal.GetHRForLastWin32Error();
+            }
+
+            MENUITEMINFO clean = new MENUITEMINFO();
+            clean.cbSize = (uint)Marshal.SizeOf(clean);
+            clean.fMask = MIIM.MIIM_STRING | MIIM.MIIM_FTYPE |
+                MIIM.MIIM_ID | MIIM.MIIM_STATE | MIIM.MIIM_CHECKMARKS;
+            clean.wID = idCmdFirst + 2;
+            clean.fType = MFT.MFT_STRING;
+            clean.dwTypeData = "Clean packages directory";
+            var cleanChecked = options.First(x => x.Key == "cleanPackages").Value == "True" ? MFS.MFS_CHECKED : MFS.MFS_UNCHECKED;
+            clean.fState = MFS.MFS_ENABLED | cleanChecked;
+            if (!NativeMethods.InsertMenuItem(optionMenu, 2, true, ref clean))
+            {
+                return Marshal.GetHRForLastWin32Error();
+            }
+            #endregion
+
+            IntPtr getMenu = NativeMethods.CreatePopupMenu();
+            if (!NativeMethods.InsertMenu(getMenu, 0, (uint)MF.MF_BYPOSITION | (uint)MF.MF_POPUP, (uint)optionMenu.ToInt32(), "Options"))
+            {
+                return Marshal.GetHRForLastWin32Error();
+            }
+            if (!NativeMethods.InsertMenu(getMenu, 1, (uint)MF.MF_BYPOSITION | (uint)MF.MF_POPUP, (uint)sourceMenu.ToInt32(), "Sources"))
+            {
+                return Marshal.GetHRForLastWin32Error();
             }
 
             MENUITEMINFO parentmii = new MENUITEMINFO();
@@ -248,7 +316,7 @@ namespace NuGetContextMenuHandler
                 MIIM.MIIM_ID | MIIM.MIIM_STATE | MIIM.MIIM_SUBMENU;
             parentmii.wID = idCmdFirst;
             parentmii.fType = MFT.MFT_STRING;
-            parentmii.hSubMenu = testMenu;
+            parentmii.hSubMenu = getMenu;
             parentmii.dwTypeData = this.menuText;
             parentmii.fState = MFS.MFS_ENABLED;
             parentmii.hbmpItem = this.menuBmp;
@@ -272,35 +340,6 @@ namespace NuGetContextMenuHandler
             // that was assigned, plus one (1).
             return WinError.MAKE_HRESULT(WinError.SEVERITY_SUCCESS, 0,
                 IDM_DISPLAY + 1);
-        }
-
-        private static List<KeyValuePair<string, string>> GetSources()
-        {
-            List<KeyValuePair<string, string>> enabledSources = new List<KeyValuePair<string, string>>();
-            var nugetConfig = String.Format(@"{0}\NuGet\NuGet.Config", Environment.GetEnvironmentVariable("APPDATA"));
-
-            XmlDocument config = new XmlDocument();
-            config.Load(nugetConfig);
-
-            var allSources = config.GetElementsByTagName("packageSources");
-            for (int i = 0; i < allSources[0].ChildNodes.Count; i++)
-            {
-                var source = allSources[0].ChildNodes[i].Attributes;
-                var key = source.GetNamedItem("key").Value;
-                var value = source.GetNamedItem("value").Value;
-                KeyValuePair<string, string> item = new KeyValuePair<string, string>(key, value);
-                enabledSources.Add(item);
-            }
-
-            var disabledSources = config.GetElementsByTagName("disabledPackageSources");
-            for (int i = 0; i < disabledSources[0].ChildNodes.Count; i++)
-            {
-                var key = disabledSources[0].ChildNodes[i].Attributes.GetNamedItem("key").Value;
-                var source = enabledSources.Find(x => x.Key == key);
-                enabledSources.Remove(source);
-            }
-
-            return enabledSources;
         }
 
         /// <summary>
